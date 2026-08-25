@@ -1047,40 +1047,67 @@ def _openapi():
     )
     schema["servers"] = [{"url": PUBLIC}]
 
-    # ⚠️ 외부 검증기(mppscan 등록 감사)가 우리 x-payment-info 를 **못 봤다**고 돌려줬다.
-    # operation 아래에만 달아뒀는데 path item 쪽을 보는 구현이 있다. 양쪽에 단다(중복은 무해).
-    # 그리고 무료 라우트는 `security: []` 로 "명시적 공개"라고 말해줘야 한다.
-    # 안 그러면 감사에서 "auth mode 선언 없음" 경고가 14건 뜨고, 색인기가 유무료를 못 가른다.
-    def _paid_info(price: str, protocols: list[str], networks: list[str], asset: str) -> dict:
-        return {
+    # ⚠️ 우리 x-payment-info 모양이 틀렸다는 걸 **작동하는 남의 것을 읽고** 알았다.
+    # 감사 경고("가격 없음")를 두 번 고쳐도 안 없어져서, mppscan에 실제로 등재된 서비스의
+    # openapi를 열어 비교했다(c2pa.mppfy.com). 차이가 분명했다:
+    #   price 는 **평문 문자열**("0.010000")이지 {mode,currency,amount} 객체가 아니다.
+    #   pricingMode 는 형제 키. amount 는 원자단위 문자열, currency 는 **토큰 주소**.
+    #   무료 라우트도 x-payment-info 를 달되 price:"0" 으로 말한다(security:[] 가 아니라).
+    #   info.x-guidance 가 있으면 L4_GUIDANCE_MISSING 이 사라진다.
+    # 추측으로 세 번 고치는 것보다 작동하는 예시 하나를 읽는 게 빨랐다.
+    USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    TEMPO_TOKEN = "0x20C000000000000000000000b9537d11c60E8b50"
+
+    def _atomic(price: str) -> str:
+        return str(int(round(float(price.lstrip("$")) * 1_000_000)))
+
+    def _pay_ext(price: str, protocols: list[str], currency: str, desc: str, mpp: bool) -> dict:
+        d = {
             "protocols": protocols,
-            "price": {"mode": "fixed", "currency": "USD", "amount": price.lstrip("$")},
-            "networks": networks,
+            "pricingMode": "fixed",
+            "price": f"{float(price.lstrip('$')):.6f}",
+            "amount": _atomic(price),
+            "currency": currency,
             "payTo": PAY_TO,
-            "asset": asset,
+            "description": desc,
+        }
+        if mpp:
+            d["method"] = "tempo"
+            d["intent"] = "charge"
+        else:
+            d["networks"] = NETWORKS
+            d["asset"] = "USDC"
+        return d
+
+    schema["info"]["x-guidance"] = (
+        "Free: GET /precheck?claim=… or ?text=… returns which of nine documented self-deception "
+        "patterns your conclusion trips. GET /contents lists all 186 case titles. GET /sample "
+        "returns two full cases. Paid: /search by symptom, /audit for the full check with the "
+        "incident behind it, /brief before an irreversible action, /research for the 107 "
+        "measurement failures, /archive for everything at once. x402 settles on Base, the "
+        "/mpp/* mirrors settle on Tempo."
+    )
+
+    _MPP_PRICES = {f"/mpp/{k}": v for k, v in
+                   {"search": "$0.01", "audit": "$0.02", "brief": "$0.05",
+                    "research": "$0.25", "archive": "$1.00"}.items()}
+    for path, price in _MPP_PRICES.items():
+        item = schema.get("paths", {}).get(path)
+        if not item or not item.get("get"):
+            continue
+        ext = _pay_ext(price, ["mpp"], TEMPO_TOKEN, f"Agent Failure Archive: {path}", mpp=True)
+        item["x-payment-info"] = ext
+        item["get"]["x-payment-info"] = ext
+        item["get"].setdefault("responses", {})["402"] = {
+            "description": "Payment required. Challenge ships in the WWW-Authenticate header."
         }
 
-    # MPP 라우트도 유료라고 선언해야 MPP 색인기가 집는다(안 하면 등록 시 5건 전부 실패).
-    _MPP_INFO = {f"/mpp/{k}": v for k, v in
-                 {"search": "$0.01", "audit": "$0.02", "brief": "$0.05",
-                  "research": "$0.25", "archive": "$1.00"}.items()}
-    for path, price in _MPP_INFO.items():
-        item = schema.get("paths", {}).get(path)
-        if not item:
-            continue
-        info = _paid_info(price, ["mpp"], ["tempo:4217"], "USDC")
-        item["x-payment-info"] = info
-        op = item.get("get")
-        if op:
-            op["x-payment-info"] = info
-            op.setdefault("responses", {})["402"] = {
-                "description": "Payment required. Challenge ships in the WWW-Authenticate header."
-            }
-
+    FREE_EXT = {"protocols": ["x402", "mpp"], "pricingMode": "fixed", "price": "0"}
     for path, item in schema.get("paths", {}).items():
         op = item.get("get")
-        if op and path not in _PAID and path not in _MPP_INFO:
-            op["security"] = []          # 명시적 공개
+        if op and path not in _PAID and path not in _MPP_PRICES:
+            op["x-payment-info"] = dict(FREE_EXT)
+            op["security"] = []
 
     for path, (price, summary, blurb) in _PAID.items():
         op = schema.get("paths", {}).get(path, {}).get("get")
@@ -1090,7 +1117,7 @@ def _openapi():
         op["description"] = f"{blurb} Price: {price} per call, settled in USDC on Base via x402."
         op["operationId"] = "afa_" + path.strip("/")
         op["tags"] = ["Agent Failure Archive"]
-        info = _paid_info(price, ["x402"], NETWORKS, "USDC")
+        info = _pay_ext(price, ["x402"], USDC_BASE, summary, mpp=False)
         op["x-payment-info"] = info
         schema["paths"][path]["x-payment-info"] = info   # path item 쪽도 본다
         op.setdefault("responses", {})["402"] = {
