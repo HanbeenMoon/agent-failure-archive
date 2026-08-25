@@ -51,6 +51,15 @@ NETWORK = NETWORKS[0]
 FACILITATOR = os.environ.get("X402_FACILITATOR", "https://facilitator.payai.network").strip()
 PRICE_SEARCH = os.environ.get("X402_PRICE_SEARCH", "$0.01")
 PRICE_BRIEF = os.environ.get("X402_PRICE_BRIEF", "$0.05")
+PRICE_RESEARCH = os.environ.get("X402_PRICE_RESEARCH", "$0.25")
+PRICE_ARCHIVE = os.environ.get("X402_PRICE_ARCHIVE", "$1.00")
+
+# 개인 온톨로지·개체화 측정을 하다 실패한 기록. 여기가 이 아카이브의 희소한 절반이다.
+RESEARCH = re.compile(
+    r"odnar|parole|langue|disparation|individuat|ontolog|embedding|vector|corpus|"
+    r"SAE|retrieval|RAG|measur|calibrat|오드나|파롤|랑그|개체화|임베딩|측정",
+    re.I,
+)
 
 app = FastAPI(title="Agent Failure Archive", version="0.1.0")
 
@@ -125,14 +134,20 @@ def _card(r: dict, full: bool = True) -> dict:
 async def index():
     return {
         "service": "Agent Failure Archive",
-        "what": "Real post-mortems from running a multi-session AI agent system for 8 months.",
+        "what": (
+            "Real post-mortems from 8 months of running a multi-session AI agent system "
+            "while trying to measure one person's individuation."
+        ),
         "why": "Public repos show code that worked. These are the ones that died silently.",
         "cases": len(rows()),
         "with_measured_evidence": sum(1 for r in rows() if r["evidence"]),
+        "research_subset": len(_research_rows()),
         "endpoints": {
             "/sample": "free preview (2 cases)",
             "/search?q=<symptom>": f"{PRICE_SEARCH} per call, 3 cases with root cause + fix",
             "/brief?action=<what you are about to do>": f"{PRICE_BRIEF} per call, pre-flight risk brief",
+            "/research?q=<topic>": f"{PRICE_RESEARCH} per call, failures from measuring personal ontology",
+            "/archive": f"{PRICE_ARCHIVE} once, every case in one response",
         },
         "excludes": "no personal data, no operator utterances, no business records",
         "paid_routes_live": bool(PAY_TO),
@@ -168,6 +183,23 @@ async def well_known_x402():
                 "description": "Pre-flight risk brief before an irreversible action, drawn from 5 incidents.",
                 "input": {"action": "string, e.g. 'wire a new scheduled repair job'"},
             },
+            {
+                "path": "/research",
+                "method": "GET",
+                "price": PRICE_RESEARCH,
+                "description": (
+                    "Failures from an 8-month attempt to measure one person's individuation: "
+                    "corpus contamination, embedding scope, retrieval collapse, withdrawn measurements."
+                ),
+                "input": {"q": "string, e.g. 'corpus purity' or 'negative control'"},
+            },
+            {
+                "path": "/archive",
+                "method": "GET",
+                "price": PRICE_ARCHIVE,
+                "description": "Every case in one response. One purchase, no subscription.",
+                "input": {},
+            },
         ],
         "free": ["/", "/sample", "/llms.txt"],
         "accepts": [
@@ -183,36 +215,49 @@ async def llms_txt():
     """에이전트가 사람 페이지 대신 읽는 자리. 무엇을 파는지 한 화면에."""
     return f"""# Agent Failure Archive
 
-{len(rows())} post-mortems from running a multi-session AI agent system in production for
-8 months. Public repositories show code that worked; these are the wirings that looked
-correct, passed review, ran for weeks, and were dead the whole time.
+{len(rows())} post-mortems from 8 months of running a multi-session AI agent system in
+production while trying to do one specific research thing with it: measure a single
+person's individuation, continuously, from their own writing.
 
-{sum(1 for r in rows() if r['evidence'])} of the cases carry measured evidence
-(durations, counts, rates). Each case has a symptom, a root cause, the fix that was
+Both halves failed often, and both halves were written down.
+
+Public repositories show code that worked. These are the wirings that looked correct,
+passed review, ran for weeks, and were dead the whole time. {sum(1 for r in rows() if r['evidence'])} of the cases carry
+measured evidence (durations, counts, rates). Each has a symptom, a root cause, the fix
 applied, and the prevention rule it produced.
+
+{len(_research_rows())} of them come from the research half, which is the part you will
+not find elsewhere: what happens when you try to measure a person and the measurement
+keeps turning out to be measuring your own instrument instead.
 
 ## Free
 - GET /            what this is
 - GET /sample      two full cases, no payment
 - GET /llms.txt    this file
 
-## Paid ({PRICE_SEARCH} - {PRICE_BRIEF} USDC on Base, x402, no API key, no signup)
-- GET /search?q=<symptom>
+## Paid (USDC on Base, x402, no API key, no signup)
+- GET /search?q=<symptom>                     {PRICE_SEARCH}
   Three incidents matching a symptom. Try: "cron job silently stopped",
   "hook dies without error", "process exits 0 but did nothing".
-- GET /brief?action=<what you are about to do>
-  A pre-flight risk brief. Describe an action in plain words and get back the ways
-  that class of action has actually failed, plus the checklist each incident produced.
-  Reach for this before anything irreversible.
+- GET /brief?action=<what you are about to do>  {PRICE_BRIEF}
+  A pre-flight risk brief. Describe an action in plain words and get back the ways that
+  class of action has actually failed. Reach for this before anything irreversible.
+- GET /research?q=<topic>                     {PRICE_RESEARCH}
+  The measurement failures. Corpus that turned out to be 12% the person and 88% machine
+  output. Detectors that returned the same answer whether the signal was there or not.
+  Findings that were withdrawn after a negative control was finally run.
+- GET /archive                                {PRICE_ARCHIVE}
+  Everything, in one response, once.
 
 ## Not included
 No personal data, no operator utterances, no business records. Source documents
-mentioning a person, a business relationship or a monetary amount are excluded whole.
+mentioning a person, a business relationship or a monetary amount are excluded whole,
+not redacted line by line.
 
 ## Caveat
-This is one operator's system. Treat it as prior art, not as a guarantee. Coverage is
-skewed toward multi-session coordination, hook and cron wiring, retrieval pipelines,
-and scheduled repair.
+This is one operator's system. Treat it as prior art, not as a guarantee. Coverage skews
+toward multi-session coordination, hook and cron wiring, retrieval pipelines, scheduled
+repair, and the measurement design of a single-subject study.
 
 Source: https://github.com/HanbeenMoon/agent-failure-archive
 """
@@ -262,6 +307,50 @@ async def brief(action: str = ""):
     }
 
 
+def _research_rows() -> list[dict]:
+    return [r for r in rows() if RESEARCH.search(json.dumps(r, ensure_ascii=False))]
+
+
+@app.get("/research")
+async def research(q: str = "", k: int = 5):
+    """개체화·개인 온톨로지 측정을 시도하다 실패한 기록만. 이게 정말 안 나오는 데이터다."""
+    if not PAY_TO:
+        return _no_wallet()
+    pool = _research_rows()
+    terms = [t for t in re.split(r"[\s,]+", q.strip().lower()) if len(t) > 1 and t not in STOP]
+    if terms:
+        scored = sorted(((_score(r, terms), r) for r in pool), key=lambda x: -x[0])
+        hits = [r for s, r in scored if s > 0][: min(max(k, 1), 10)] or pool[:k]
+    else:
+        hits = pool[: min(max(k, 1), 10)]
+    return {
+        "query": q,
+        "scope": (
+            "Failures from an 8-month attempt to measure one person's individuation "
+            "(personal ontology): what broke in the corpus, the embeddings, the retrieval, "
+            "and the measurement design itself."
+        ),
+        "pool_size": len(pool),
+        "cases": [_card(r) for r in hits],
+        "caveat": "Negative results included on purpose. Several of these measurements were later withdrawn.",
+    }
+
+
+@app.get("/archive")
+async def archive():
+    """전량. 값을 $1로 둔 건 한 번 팔리면 이 실험이 끝나기 때문이다(목표가 1달러였다)."""
+    if not PAY_TO:
+        return _no_wallet()
+    all_rows = rows()
+    return {
+        "count": len(all_rows),
+        "with_measured_evidence": sum(1 for r in all_rows if r["evidence"]),
+        "research_subset": len(_research_rows()),
+        "license": "Use freely. Attribution appreciated, not required.",
+        "cases": [_card(r) for r in all_rows],
+    }
+
+
 # ── x402 페이월 (지갑이 있을 때만 장착) ──────────────────────────────
 if PAY_TO:
     from x402 import x402ResourceServer
@@ -280,6 +369,16 @@ if PAY_TO:
         "GET /brief": {
             "accepts": _accepts(PRICE_BRIEF),
             "extensions": {"bazaar": {"discoverable": True, "info": {"input": {"action": "wire a new cron job"}}}},
+        },
+        "GET /research": {
+            "accepts": _accepts(PRICE_RESEARCH),
+            "extensions": {
+                "bazaar": {"discoverable": True, "info": {"input": {"q": "personal ontology measurement"}}}
+            },
+        },
+        "GET /archive": {
+            "accepts": _accepts(PRICE_ARCHIVE),
+            "extensions": {"bazaar": {"discoverable": True, "info": {"input": {}}}},
         },
     }
 
