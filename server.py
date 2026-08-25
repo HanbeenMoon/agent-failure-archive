@@ -40,7 +40,9 @@ CORPUS = next(
     HERE / "data" / "failure_corpus.jsonl",
 )
 
-PAY_TO = os.environ.get("X402_PAY_TO", "").strip()
+# 수령 주소는 원래 공개되어야 결제가 성립한다(402 응답 본문에 실린다). 환경변수가 우선.
+DEFAULT_PAY_TO = "0xFC15354FE6a96d87399582dbe9DF8d2739B1fF9a"
+PAY_TO = os.environ.get("X402_PAY_TO", DEFAULT_PAY_TO).strip()
 # 여러 체인을 동시에 연다. 사는 쪽이 이미 잔고를 가진 체인으로 내면 된다.
 # Base 메인넷이 기본. 아발란체(eip155:43114)는 SDK가 그 체인 USDC를 아직 몰라 500이 난다(실측).
 NETWORKS = [n.strip() for n in os.environ.get("X402_NETWORKS", "eip155:8453").split(",") if n.strip()]
@@ -55,10 +57,29 @@ app = FastAPI(title="Agent Failure Archive", version="0.1.0")
 _ROWS: list[dict] = []
 
 
+CORPUS_URL = os.environ.get(
+    "X402_CORPUS_URL",
+    "https://raw.githubusercontent.com/HanbeenMoon/agent-failure-archive/main/data/failure_corpus.jsonl",
+)
+
+
 def rows() -> list[dict]:
+    """코퍼스를 한 번만 읽어 캐시한다. 파일이 없는 서버리스 환경이면 공개 URL에서 받는다."""
     global _ROWS
-    if not _ROWS and CORPUS.exists():
-        _ROWS = [json.loads(l) for l in CORPUS.read_text(encoding="utf-8").splitlines() if l.strip()]
+    if _ROWS:
+        return _ROWS
+    text = ""
+    if CORPUS.exists():
+        text = CORPUS.read_text(encoding="utf-8")
+    elif CORPUS_URL:
+        try:
+            import urllib.request
+
+            with urllib.request.urlopen(CORPUS_URL, timeout=10) as fh:
+                text = fh.read().decode("utf-8")
+        except Exception as e:  # 조용히 빈 목록으로 죽지 않는다
+            print(f"[corpus] fetch failed: {type(e).__name__}: {e}", file=sys.stderr)
+    _ROWS = [json.loads(l) for l in text.splitlines() if l.strip()]
     return _ROWS
 
 
