@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
@@ -178,7 +178,7 @@ def _landing() -> str:
     )
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Agent Failure Archive</title><style>{_PAGE_CSS}</style></head><body><div class="wrap">
+<title>Agent Failure Archive</title><link rel="icon" href="/favicon.svg"><style>{_PAGE_CSS}</style></head><body><div class="wrap">
 <h1>{len(all_rows)} post-mortems from an agent system that kept breaking quietly</h1>
 <p class="sub">Eight months in production. {sum(1 for r in all_rows if r["evidence"])} of them carry
 numbers measured at the time. {len(_research_rows())} come from trying to measure one person with
@@ -332,6 +332,24 @@ async def well_known_x402():
         "facilitator": FACILITATOR,
         "source": "https://github.com/HanbeenMoon/agent-failure-archive",
     }
+
+
+# 목록에 아이콘이 없으면 경쟁 항목들 사이에서 빈칸으로 뜬다. 실측: 우리 favicon=null,
+# 외부에서 favicon.ico/png/svg 를 HEAD로 찾다가 404를 30번 받아갔다. 외부 의존 없이 직접 그린다.
+_FAVICON = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+    '<rect width="64" height="64" rx="12" fill="#0b0d10"/>'
+    '<path d="M14 44 L32 16 L50 44" fill="none" stroke="#f0b429" stroke-width="6" '
+    'stroke-linecap="round" stroke-linejoin="round"/>'
+    '<circle cx="32" cy="50" r="3.5" fill="#f0b429"/></svg>'
+)
+
+
+@app.get("/favicon.svg")
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(content=_FAVICON, media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/llms.txt", response_class=PlainTextResponse)
@@ -1043,6 +1061,20 @@ app.openapi = _openapi
 # 설명·태그를 고쳐 다시 등록해도 옛 문구가 그대로 남는다(실측: 재등록 registered=4인데
 # lastUpdated가 첫 등록 시각에서 안 움직임). 발견 문서만 no-store로 못박아 매번 새로 읽게 한다.
 _NO_STORE = ("/openapi.json", "/.well-known/x402", "/.well-known/x402.json", "/llms.txt")
+
+
+# ⚠️ 실측 1,031건 중 632건(61%)이 405였다. 크롤러가 HEAD·OPTIONS로 생존과 지원 메서드를 훑는데
+# FastAPI는 GET 라우트에 HEAD를 자동으로 붙이지 않는다. 생존 확인을 HEAD로 하는 색인기 눈에는
+# 우리가 죽은 주소로 보인다("reachable endpoint" 집계에서 빠지는 자리).
+# 라우트를 다 고치는 대신 바깥에서 HEAD를 GET으로 돌리고 본문만 버린다(HEAD 의미 그대로).
+@app.middleware("http")
+async def head_as_get(request: Request, call_next):
+    if request.method != "HEAD":
+        return await call_next(request)
+    request.scope["method"] = "GET"
+    resp = await call_next(request)
+    # 헤더는 GET이 줬을 것 그대로 두고 본문만 비운다. content-length도 유지가 맞다.
+    return Response(status_code=resp.status_code, headers=dict(resp.headers))
 
 
 @app.middleware("http")
