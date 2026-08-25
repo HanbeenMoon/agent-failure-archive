@@ -156,11 +156,21 @@ async def index():
     }
 
 
+PUBLIC = os.environ.get("X402_PUBLIC_BASE", "https://desktop-ai2ata5-1.tailfeb765.ts.net/afa").rstrip("/")
+PAID_PATHS = ["/search", "/brief", "/research", "/archive"]
+
+
 @app.get("/.well-known/x402")
 @app.get("/.well-known/x402.json")
 async def well_known_x402():
-    """크롤러·디렉토리가 표준으로 찾아보는 자리. 여기 없으면 아무도 못 줍는다."""
+    """크롤러·디렉토리가 표준으로 찾아보는 자리. 여기 없으면 아무도 못 줍는다.
+
+    ⚠️ `version` + `resources` 두 칸이 x402scan 규격이다(docs/DISCOVERY.md §B). 이게 없으면
+    등재기가 우리 라우트를 아예 못 펼친다. 나머지 칸은 사람이 읽으라고 덧붙인 것.
+    """
     return {
+        "version": 1,
+        "resources": [f"{PUBLIC}{p}" for p in PAID_PATHS],
         "x402Version": 2,
         "name": "Agent Failure Archive",
         "description": (
@@ -337,7 +347,7 @@ async def research(q: str = "", k: int = 5):
 
 
 @app.get("/archive")
-async def archive():
+async def archive(format: str = "json"):
     """전량. 값을 $1로 둔 건 한 번 팔리면 이 실험이 끝나기 때문이다(목표가 1달러였다)."""
     if not PAY_TO:
         return _no_wallet()
@@ -376,9 +386,13 @@ if PAY_TO:
                 "bazaar": {"discoverable": True, "info": {"input": {"q": "personal ontology measurement"}}}
             },
         },
+        # 입력 스키마가 비면 등재기가 "non-invocable"로 걸러낸다(x402scan DISCOVERY.md).
+        # 인자가 없는 라우트도 형식만 채워 둔다.
         "GET /archive": {
             "accepts": _accepts(PRICE_ARCHIVE),
-            "extensions": {"bazaar": {"discoverable": True, "info": {"input": {}}}},
+            "extensions": {
+                "bazaar": {"discoverable": True, "info": {"input": {"format": "json"}}}
+            },
         },
     }
 
@@ -419,3 +433,50 @@ if PAY_TO:
     print(f"[x402] paid routes live · payTo={PAY_TO[:10]}… network={NETWORK}", file=sys.stderr)
 else:
     print("[x402] X402_PAY_TO unset — free routes only, paid routes return 503", file=sys.stderr)
+
+
+# ── OpenAPI에 결제 정보 심기 (등재기 1순위 발견 경로) ────────────────
+# x402scan은 /openapi.json을 먼저 본다. 거기 x-payment-info와 402 응답이 없으면
+# 유료 라우트인 줄 모르고 지나간다(docs/DISCOVERY.md §A).
+_PRICES = {
+    "/search": PRICE_SEARCH,
+    "/brief": PRICE_BRIEF,
+    "/research": PRICE_RESEARCH,
+    "/archive": PRICE_ARCHIVE,
+}
+
+
+def _openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+
+    schema = get_openapi(
+        title="Agent Failure Archive",
+        version="0.2.0",
+        description=(
+            "186 post-mortems from 8 months of running a multi-session AI agent system "
+            "while trying to measure one person's individuation. Pay per call over x402."
+        ),
+        routes=app.routes,
+    )
+    schema["servers"] = [{"url": PUBLIC}]
+    for path, price in _PRICES.items():
+        op = schema.get("paths", {}).get(path, {}).get("get")
+        if not op:
+            continue
+        op["x-payment-info"] = {
+            "protocols": ["x402"],
+            "price": {"mode": "fixed", "currency": "USD", "amount": price.lstrip("$")},
+            "networks": NETWORKS,
+            "payTo": PAY_TO,
+            "asset": "USDC",
+        }
+        op.setdefault("responses", {})["402"] = {
+            "description": "Payment required. The challenge ships in the Payment-Required header."
+        }
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _openapi
