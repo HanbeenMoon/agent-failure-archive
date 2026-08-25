@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
@@ -83,16 +83,21 @@ def rows() -> list[dict]:
     return _ROWS
 
 
+# 검색어에 흔히 섞이지만 변별력이 없는 말. 이게 없으면 "the"가 점수를 지배한다.
+STOP = {"the", "a", "an", "and", "or", "of", "to", "in", "on", "is", "it", "my", "for", "with", "that"}
+
+
 def _score(r: dict, terms: list[str]) -> int:
-    blob = f"{r['title']} {r['symptom']} {r['root_cause']} {r['fix']} {r['prevention']}"
+    blob = f"{r['title']} {r['symptom']} {r['root_cause']} {r['fix']} {r['prevention']}".lower()
+    title = r["title"].lower()
     s = sum(blob.count(t) for t in terms)
-    s += 4 * sum(1 for t in terms if t in r["title"])
-    s += 2 * sum(1 for t in terms for e in r["evidence"] if t in e)
+    s += 4 * sum(1 for t in terms if t in title)
+    s += 2 * sum(1 for t in terms for e in r["evidence"] if t in e.lower())
     return s
 
 
 def find(q: str, k: int = 3) -> list[dict]:
-    terms = [t for t in re.split(r"[\s,]+", q.strip()) if len(t) > 1]
+    terms = [t for t in re.split(r"[\s,]+", q.strip().lower()) if len(t) > 1 and t not in STOP]
     if not terms:
         return []
     scored = [(_score(r, terms), r) for r in rows()]
@@ -134,6 +139,83 @@ async def index():
         "networks": NETWORKS,
         "facilitator": FACILITATOR,
     }
+
+
+@app.get("/.well-known/x402")
+@app.get("/.well-known/x402.json")
+async def well_known_x402():
+    """크롤러·디렉토리가 표준으로 찾아보는 자리. 여기 없으면 아무도 못 줍는다."""
+    return {
+        "x402Version": 2,
+        "name": "Agent Failure Archive",
+        "description": (
+            "186 post-mortems from running a multi-session AI agent system in production "
+            "for 8 months: silent cron deaths, repairs wired to signals nobody consumes, "
+            "watchers that exit 0 after their session expired."
+        ),
+        "endpoints": [
+            {
+                "path": "/search",
+                "method": "GET",
+                "price": PRICE_SEARCH,
+                "description": "3 incidents matching a symptom, with root cause, fix and prevention.",
+                "input": {"q": "string, e.g. 'cron job silently stopped running'"},
+            },
+            {
+                "path": "/brief",
+                "method": "GET",
+                "price": PRICE_BRIEF,
+                "description": "Pre-flight risk brief before an irreversible action, drawn from 5 incidents.",
+                "input": {"action": "string, e.g. 'wire a new scheduled repair job'"},
+            },
+        ],
+        "free": ["/", "/sample", "/llms.txt"],
+        "accepts": [
+            {"scheme": "exact", "network": n, "asset": "USDC", "payTo": PAY_TO} for n in NETWORKS
+        ],
+        "facilitator": FACILITATOR,
+        "source": "https://github.com/HanbeenMoon/agent-failure-archive",
+    }
+
+
+@app.get("/llms.txt", response_class=PlainTextResponse)
+async def llms_txt():
+    """에이전트가 사람 페이지 대신 읽는 자리. 무엇을 파는지 한 화면에."""
+    return f"""# Agent Failure Archive
+
+{len(rows())} post-mortems from running a multi-session AI agent system in production for
+8 months. Public repositories show code that worked; these are the wirings that looked
+correct, passed review, ran for weeks, and were dead the whole time.
+
+{sum(1 for r in rows() if r['evidence'])} of the cases carry measured evidence
+(durations, counts, rates). Each case has a symptom, a root cause, the fix that was
+applied, and the prevention rule it produced.
+
+## Free
+- GET /            what this is
+- GET /sample      two full cases, no payment
+- GET /llms.txt    this file
+
+## Paid ({PRICE_SEARCH} - {PRICE_BRIEF} USDC on Base, x402, no API key, no signup)
+- GET /search?q=<symptom>
+  Three incidents matching a symptom. Try: "cron job silently stopped",
+  "hook dies without error", "process exits 0 but did nothing".
+- GET /brief?action=<what you are about to do>
+  A pre-flight risk brief. Describe an action in plain words and get back the ways
+  that class of action has actually failed, plus the checklist each incident produced.
+  Reach for this before anything irreversible.
+
+## Not included
+No personal data, no operator utterances, no business records. Source documents
+mentioning a person, a business relationship or a monetary amount are excluded whole.
+
+## Caveat
+This is one operator's system. Treat it as prior art, not as a guarantee. Coverage is
+skewed toward multi-session coordination, hook and cron wiring, retrieval pipelines,
+and scheduled repair.
+
+Source: https://github.com/HanbeenMoon/agent-failure-archive
+"""
 
 
 @app.get("/sample")
@@ -207,9 +289,33 @@ if PAY_TO:
     _server = register_exact_evm_server(x402ResourceServer(_fac), networks=NETWORKS)
     _mw = payment_middleware(ROUTES, _server)
 
+    LEDGER = Path(os.environ.get("X402_LEDGER", "/tmp/afa_payments.jsonl"))
+
     @app.middleware("http")
     async def x402_paywall(request: Request, call_next):
-        return await _mw(request, call_next)
+        paying = bool(request.headers.get("x-payment") or request.headers.get("payment"))
+        resp = await _mw(request, call_next)
+        # 결제를 시도한 호출만 남긴다. 402를 받고 사라진 사람은 손님이 아니라 구경꾼이다.
+        # 첫 결제가 거절당하면 그 사람은 돈만 잃으므로, 거절 이유가 안 남으면 고칠 수가 없다.
+        if paying:
+            try:
+                with LEDGER.open("a", encoding="utf-8") as f:
+                    f.write(
+                        json.dumps(
+                            {
+                                "path": request.url.path,
+                                "query": str(request.url.query),
+                                "status": resp.status_code,
+                                "settled": bool(resp.headers.get("payment-response")),
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+            except Exception as e:
+                print(f"[ledger] {type(e).__name__}: {e}", file=sys.stderr)
+            print(f"[x402] payment attempt {request.url.path} -> {resp.status_code}", file=sys.stderr)
+        return resp
 
     print(f"[x402] paid routes live · payTo={PAY_TO[:10]}… network={NETWORK}", file=sys.stderr)
 else:
