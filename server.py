@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
@@ -131,8 +131,101 @@ def _card(r: dict, full: bool = True) -> dict:
 
 
 # ── 무료 (미끼 + 발견) ────────────────────────────────────────────────
+# 사람이 브라우저로 들어오면 JSON 덩어리가 아니라 읽을 수 있는 것을 준다.
+# 첫 손님이 기계가 아니라 사람일 확률이 높다고 실측으로 판단했는데(디렉토리 챗은 108일째 무호출),
+# 정작 그 사람이 루트에서 보는 게 raw JSON이었다. 파는 자리에 간판이 없던 셈.
+# ⚠️ Accept에 text/html 이 **명시**될 때만 HTML을 준다. 크롤러는 대개 */* 라서 JSON을 그대로 받는다.
+def _wants_html(request: Request) -> bool:
+    return "text/html" in (request.headers.get("accept") or "").lower()
+
+
+_PAGE_CSS = """
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:#0b0d10;color:#d7dce3;font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:46rem;margin:0 auto;padding:3rem 1.25rem 5rem}
+h1{font-size:1.65rem;line-height:1.25;margin:0 0 .4rem;color:#fff;letter-spacing:-.01em}
+h2{font-size:1.05rem;margin:2.6rem 0 .7rem;color:#fff}
+p{margin:.7rem 0}
+.sub{color:#8b94a3;margin:0 0 2rem}
+a{color:#79b8ff}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.87em}
+.card{background:#12161c;border:1px solid #1f2630;border-radius:10px;padding:1rem 1.15rem;margin:.75rem 0}
+.n{color:#fff;font-weight:600}
+table{width:100%;border-collapse:collapse;margin:.6rem 0;font-size:.93rem}
+td{padding:.34rem 0;border-bottom:1px solid #1a212b;vertical-align:top}
+td:last-child{text-align:right;color:#8b94a3;white-space:nowrap;padding-left:1rem}
+.try{display:inline-block;margin:.28rem .4rem .28rem 0;padding:.42rem .8rem;background:#182029;
+     border:1px solid #26313d;border-radius:7px;color:#79b8ff;text-decoration:none;font-size:.9rem}
+.try:hover{background:#1d2731}
+.buy{display:inline-block;margin-top:.6rem;padding:.7rem 1.15rem;background:#1f6feb;color:#fff;
+     border-radius:8px;text-decoration:none;font-weight:600}
+.note{color:#8b94a3;font-size:.9rem}
+hr{border:0;border-top:1px solid #1a212b;margin:2.5rem 0}
+"""
+
+
+def _landing() -> str:
+    all_rows = rows()
+    counts: dict[str, int] = {}
+    for r in all_rows:
+        for t in _themes(r):
+            counts[t] = counts.get(t, 0) + 1
+    top = sorted(counts.items(), key=lambda x: -x[1])
+    label = {c["id"]: c["question"] for c in CHECKS}
+    trap_rows = "".join(
+        f"<tr><td>{label.get(k, k)}</td><td>{v}</td></tr>" for k, v in top
+    )
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent Failure Archive</title><style>{_PAGE_CSS}</style></head><body><div class="wrap">
+<h1>{len(all_rows)} post-mortems from an agent system that kept breaking quietly</h1>
+<p class="sub">Eight months in production. {sum(1 for r in all_rows if r["evidence"])} of them carry
+numbers measured at the time. {len(_research_rows())} come from trying to measure one person with
+embeddings, which mostly failed.</p>
+
+<div class="card"><p style="margin-top:0"><strong>A real entry.</strong> A repair routine existed
+and its runner ticked <span class="n">26,662 times over 22.7 hours</span>. It performed
+<span class="n">zero</span> repairs, because a guard condition never matched. Fourteen sessions sat
+dead the whole time, and every log line said <code>skip</code>.</p></div>
+
+<h2>Try it now, free, no wallet</h2>
+<p>Paste a conclusion and it tells you which known trap it falls into. Deterministic, no model
+in the loop, so the same input always gives the same answer.</p>
+<a class="try" href="/precheck?claim=the%20new%20ranker%20has%20no%20measurable%20effect&amp;evidence=ran%20it%20on%2040%20queries">
+try /precheck</a>
+<a class="try" href="/contents">see all {len(all_rows)} titles</a>
+<a class="try" href="/sample">read 2 full cases</a>
+
+<h2>What is actually in here</h2>
+<p class="note">Every case tagged by the trap it illustrates. One case can show several.</p>
+<table>{trap_rows}</table>
+
+<h2>Buy the whole thing for $1</h2>
+<p>One payment in USDC on Base. No account, no signup, no subscription. Open it in a browser with
+a wallet and you get a connect-and-pay screen; call it with any x402 client and it settles inline.
+Cheaper slices: <code>/search</code> $0.01, <code>/audit</code> $0.02, <code>/brief</code> $0.05,
+<code>/research</code> $0.25.</p>
+<a class="buy" href="/archive">Get all {len(all_rows)} cases &middot; $1.00</a>
+
+<h2>Also an MCP server</h2>
+<p>Add <code class="mono">{PUBLIC}/mcp</code> to Claude Desktop, Cursor, or anything that speaks
+MCP. Four tools work with no wallet and no configuration.</p>
+
+<hr>
+<p class="note"><strong>Honest state.</strong> Nothing here has sold yet. The receiving address has
+taken in exactly $0.00, checked on chain rather than from server logs. This is one operator's
+system, so treat it as prior art rather than as a general sample.</p>
+<p class="note"><a href="https://github.com/HanbeenMoon/agent-failure-archive">Source and corpus</a>
+&middot; <a href="https://github.com/HanbeenMoon/agent-failure-archive/blob/main/MARKET.md">measured
+notes on how this market actually behaves</a> &middot; <a href="/llms.txt">llms.txt</a></p>
+</div></body></html>"""
+
+
 @app.get("/")
-async def index():
+async def index(request: Request):
+    if _wants_html(request):
+        return HTMLResponse(_landing())
     return {
         "service": "Agent Failure Archive",
         "what": (
