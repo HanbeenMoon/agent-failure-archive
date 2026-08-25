@@ -3,6 +3,9 @@
 **186 post-mortems from running a multi-session AI agent system in production for 8 months.**
 Pay per call with [x402](https://x402.org). No signup, no API key, no subscription.
 
+Live: **https://desktop-ai2ata5-1.tailfeb765.ts.net**
+Try it free, right now: [`/sample`](https://desktop-ai2ata5-1.tailfeb765.ts.net/sample)
+
 Public repositories show you code that worked. This is the other half: the wiring that
 looked correct, passed review, ran for weeks, and was dead the whole time.
 
@@ -33,6 +36,23 @@ root cause** rather than just a symptom.
 
 ---
 
+## The measurement half
+
+For eight months this system was pointed at one question: can you measure how a single person's
+language departs from the general language, without collapsing that person into a score?
+
+It mostly failed, and the failures were more interesting than the goal. **107 of the 186 cases
+are measurement failures**: detectors that returned the same output whether the signal was
+present or absent, dose-response arms where the same parameter turned out to be two different
+treatments, positive controls that were never run, a corpus that was 2.3x smaller than the file
+count claimed, an instrument that kept measuring itself and reporting the reading as a finding.
+
+Those are the cases behind `/research`. If you are building anything that claims to measure a
+person -- style, personality, authorship, fit to a profile -- this is the catalogue of ways that
+claim breaks before you notice it has broken.
+
+---
+
 ## Endpoints
 
 | Route | Price | What you get |
@@ -41,20 +61,26 @@ root cause** rather than just a symptom.
 | `GET /sample` | free | two full cases, no payment |
 | `GET /search?q=<symptom>` | $0.01 | 3 cases: symptom, root cause, fix, prevention, evidence |
 | `GET /brief?action=<what you are about to do>` | $0.05 | pre-flight risk brief + checklist across 5 cases |
+| `GET /research?q=<topic>` | $0.25 | the 107 measurement failures above |
+| `GET /archive` | $1.00 | every case, one response, one payment, yours |
 
-Payment: USDC on Base (`eip155:8453`). Any x402 client works.
+Payment: USDC on Base (`eip155:8453`), settled through a keyless facilitator. Any x402 client
+works, and a browser gets a wallet-connect paywall instead of raw JSON.
 
 ```bash
-# free
-curl https://<host>/sample
+# free, no wallet needed
+curl https://desktop-ai2ata5-1.tailfeb765.ts.net/sample
 
-# paid, via an x402-capable client
-curl https://<host>/search?q=silent+failure+cron
+# paid, via any x402-capable client
+curl https://desktop-ai2ata5-1.tailfeb765.ts.net/search?q=silent+failure+cron
 ```
 
 `/brief` is the one to reach for before doing something irreversible: describe the action in
 plain words and it returns the ways that class of action has actually gone wrong, plus the
 prevention line each incident produced.
+
+`/archive` exists because a corpus is worth more whole than sliced. One payment ends the
+transaction; there is nothing to cancel afterwards.
 
 ---
 
@@ -77,9 +103,13 @@ passing.**
 - This is **one operator's system**. It is prior art, not a guarantee, and not a statistical
   sample of agent systems in general.
 - Coverage is skewed toward what that system does a lot of: multi-session coordination, hook and
-  cron wiring, retrieval pipelines, inter-process messaging, scheduled repair.
+  cron wiring, retrieval pipelines, inter-process messaging, scheduled repair, and the
+  measurement work described above.
 - Some entries record a failure whose fix was later found to be wrong. Those are kept, with the
   correction, because the correction is usually the more useful half.
+- **Nothing here has sold yet.** At the time of writing the receiving address has taken in
+  exactly $0.00. That number is checked on-chain rather than from server logs, and this line
+  gets updated when it changes.
 
 ---
 
