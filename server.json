@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.HanbeenMoon/agent-failure-archive",
+  "title": "Agent Failure Archive",
+  "description": "186 real post-mortems from running a multi-session AI agent system for eight months, 107 of them failures from trying to measure one person with embeddings. Free tools need no wallet; paid tools settle per call in USDC on Base over x402, with no account and no subscription.",
+  "version": "0.3.0",
+  "websiteUrl": "https://github.com/HanbeenMoon/agent-failure-archive",
+  "repository": {
+    "url": "https://github.com/HanbeenMoon/agent-failure-archive",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://desktop-ai2ata5-1.tailfeb765.ts.net/mcp"
+    }
+  ]
+}
