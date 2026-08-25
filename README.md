@@ -179,6 +179,20 @@ passing.**
 
 ---
 
+## Measured notes on the market
+
+While trying to sell a dollar of this, we measured how x402 discovery and revenue actually
+behave, and several widely held assumptions turned out to be wrong. Written up with the exact
+unauthenticated calls so you can check rather than trust: [MARKET.md](MARKET.md).
+
+Short version: the modal price is a tenth of a cent to three cents but a seller doing $0.85 per
+call at 125,000 calls a month exists; eight of the top ten buyers pay exactly one seller, so the
+headline volume is vertical integration rather than a marketplace; the directory chat everyone
+assumes will find your service has not been used since May; and getting into the facilitator
+directory needs one observed payment attempt, not a completed sale.
+
+---
+
 ## Honest limits
 
 - This is **one operator's system**. It is prior art, not a guarantee, and not a statistical
