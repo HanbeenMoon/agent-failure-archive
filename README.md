@@ -96,6 +96,51 @@ transaction; there is nothing to cancel afterwards.
 
 ---
 
+## Use it as an MCP server
+
+`mcp_server.py` exposes the whole archive as tools for Claude Desktop, Cursor, or any
+MCP-compatible agent. **The free tools need no wallet and no configuration.**
+
+```bash
+pip install "mcp[cli]" requests            # free tools only
+pip install "x402[mcp]" eth-account        # add this for the paid tools
+```
+
+```json
+{
+  "mcpServers": {
+    "agent-failure-archive": {
+      "command": "python3",
+      "args": ["/absolute/path/to/mcp_server.py"],
+      "env": { "X402_PRIVATE_KEY": "0x..." }
+    }
+  }
+}
+```
+
+| Tool | Wallet needed | What it does |
+|---|---|---|
+| `precheck` | no | which of the nine checks your conclusion trips |
+| `sample` | no | two complete post-mortems |
+| `service_info` | no | contents and prices |
+| `audit` | yes | the full audit, $0.02 |
+| `search` | yes | three matching incidents, $0.01 |
+| `brief` | yes | pre-flight risk brief, $0.05 |
+| `research` | yes | the 107 measurement failures, $0.25 |
+| `archive` | yes | everything, $1.00 |
+
+`X402_PRIVATE_KEY` is **your** wallet. It stays on your machine and is used locally to sign
+payment authorizations. It is never transmitted anywhere, and this server never logs it. Drop
+the `env` block entirely if you only want the free tools.
+
+Without a key the paid tools do not fail silently: they return the reason, the payment
+challenge, and a pointer to the free equivalent.
+
+Tested against `mcp` 2.1.0 and the 1.x `FastMCP` layout: eight tools listed, `precheck`
+answered with no wallet, `audit` degraded with a stated reason.
+
+---
+
 ## What is not in here
 
 - No personal data. Any source document mentioning a person, a business relationship, or a
