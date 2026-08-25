@@ -87,6 +87,23 @@ It is deterministic. No model is consulted, so the same input always returns the
 answers in milliseconds, and when it is wrong you can see exactly why. A clean pass is not proof
 your claim is true; it means these nine known ways of fooling yourself were considered.
 
+**Paste a paragraph, not a tidy claim.** Both `/precheck` and `/audit` accept `text=` instead of
+`claim=`. Give them a chunk of your findings and they pick out the sentences that assert something,
+then check each one separately:
+
+```bash
+curl -sG https://desktop-ai2ata5-1.tailfeb765.ts.net/precheck \
+  --data-urlencode "text=We ran the new ranker on 40 sampled queries and found no significant
+difference. The watcher is healthy: it exits 0 every run. Our corpus contains 4279 documents,
+2x the previous release."
+```
+
+returns three claims, each held for a different reason: the null result has no positive control,
+the healthy watcher would look identical having done nothing, and the corpus count may be
+counting re-dumped snapshots. Sentence selection is deterministic too, driven by the same check
+table rather than by a model, so prose with no claims in it comes back empty instead of
+inventing findings.
+
 `/brief` is the one to reach for before doing something irreversible: describe the action in
 plain words and it returns the ways that class of action has actually gone wrong, plus the
 prevention line each incident produced.
