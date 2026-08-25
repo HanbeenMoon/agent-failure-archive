@@ -400,8 +400,12 @@ async def archive(format: str = "json"):
 CHECKS: list[dict] = [
     {
         "id": "positive_control",
-        "triggers": ["no signal", "no effect", "not significant", "null result", "nothing found",
-                     "no difference", "no correlation", "absent", "failed to detect"],
+        # ⚠️ "no significant difference"에는 "no difference"도 "not significant"도 안 들어 있다.
+        # 실제 문장을 넣어보고서야 알았다(검출기에 양성 대조를 돌린 것). 근접 표현을 같이 넣는다.
+        "triggers": ["no signal", "no effect", "not significant", "no significant", "insignificant",
+                     "null result", "nothing found", "no difference", "did not differ",
+                     "no measurable", "no correlation", "absent", "failed to detect",
+                     "p > 0.05", "p>0.05"],
         "question": "Did you show the detector firing on something it should catch?",
         "why": "A silent detector and a healthy system produce identical output. Absence of "
                "signal is also consistent with a broken instrument, or with the stimulus never "
@@ -525,8 +529,53 @@ CHECKS: list[dict] = [
 ]
 
 
-def _audit(claim: str, evidence: str) -> dict:
-    text = f"{claim} {evidence}".lower()
+# 사람은 "결론 한 줄 + 증거 한 줄"로 말하지 않는다. 보고서 문단으로 말한다.
+# 그래서 문단을 받아 그 안에서 주장 문장을 골라낸다. 결정론이다(모델 안 부른다).
+# 표지는 "무언가를 단언하는 문장"에 붙는 말들이다. 없으면 서술이지 주장이 아니다.
+CLAIM_MARKERS = (
+    "we found", "we show", "we observe", "we conclude", "results show", "results indicate",
+    "this shows", "this demonstrates", "this confirms", "this proves", "indicates that",
+    "suggests that", "demonstrates that", "no significant", "not significant", "significant",
+    "outperform", "improves", "improved", "reduces", "reduced", "increases", "increased",
+    "faster than", "better than", "worse than", "no effect", "no difference", "correlat",
+    "caused by", "because of", "therefore", "so we", "which means", "confirms",
+    "p =", "p<", "p <", "p-value", "accuracy", "%",
+)
+
+_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _claims(text: str, cap: int = 8) -> list[str]:
+    """문단에서 짚어볼 문장을 고른다.
+
+    표지 목록만으로 고르면 목록에 없는 표현을 통째로 놓친다(실측: 다섯 문장 중 하나만 걸렸다).
+    그래서 기준을 바꿨다: **검사 하나라도 걸리는 문장**이면 짚어볼 값이 있다.
+    이미 있는 검사표가 곧 관련성 필터라, 표지 목록을 따로 관리할 필요가 없다.
+    단언 표지는 순위를 매기는 데만 쓴다(같은 수의 검사가 걸리면 단언하는 쪽을 위로).
+    """
+    scored = []
+    for raw in _SENT_SPLIT.split(text or ""):
+        sent = raw.strip()
+        if len(sent) < 20:
+            continue
+        low = sent.lower()
+        hits = sum(1 for c in CHECKS if any(t in low for t in c["triggers"]))
+        if not hits:
+            continue
+        assertive = sum(1 for m in CLAIM_MARKERS if m in low)
+        scored.append((hits + assertive, sent))
+    scored.sort(key=lambda x: -x[0])
+    return [s for _, s in scored[:cap]]
+
+
+def _audit(claim: str, evidence: str, trigger_on: str | None = None) -> dict:
+    """trigger_on을 주면 그 문장으로만 검사를 걸고, 다뤄졌는지는 evidence 전체에서 본다.
+
+    문단 모드에서 이게 필요하다. 문단 전체로 검사를 걸면 다른 문장의 위험이 이 문장에 붙어서,
+    모든 주장이 모든 검사에 걸린 것처럼 보인다(실측: 문장 하나에 5칸이 붙었다).
+    걸리는 것은 그 문장이 말하는 것으로, 해소됐는지는 글 전체로 본다. 그게 맞는 짝이다.
+    """
+    text = (trigger_on if trigger_on is not None else f"{claim} {evidence}").lower()
     ev = evidence.lower()
     triggered, unaddressed = [], []
     for c in CHECKS:
@@ -547,7 +596,7 @@ def _audit(claim: str, evidence: str) -> dict:
 
 
 @app.get("/precheck")
-async def precheck(claim: str = "", evidence: str = ""):
+async def precheck(claim: str = "", evidence: str = "", text: str = ""):
     """무료. 어느 칸에 걸리는지까지만 알려준다.
 
     콜드스타트에서 진짜 병목은 발견이 아니라 "왜 돈을 내야 하는지 모른다"는 것이다.
@@ -555,10 +604,39 @@ async def precheck(claim: str = "", evidence: str = ""):
     돌려보면 "그래서 뭘 어떻게 확인하라는 건데"가 남는다. 그 답이 유료 /audit이다.
     미끼가 정직하려면 무료분만으로도 실제로 도움이 돼야 한다.
     """
+    if text.strip():
+        found = _claims(text)
+        if not found:
+            return {
+                "text_len": len(text),
+                "claims_found": 0,
+                "note": ("No sentence in this text asserts a finding. Nothing to check. "
+                         "If you expected claims here, they may be phrased as description."),
+            }
+        per = []
+        for c in found:
+            rr = _audit(c, text, trigger_on=c)
+            per.append({
+                "claim": c,
+                "verdict": "hold" if rr["unaddressed"] else "proceed",
+                "checks_tripped": [x["id"] for x in rr["triggered"]],
+                "unaddressed": rr["unaddressed"],
+            })
+        return {
+            "mode": "text",
+            "claims_found": len(found),
+            "claims_holding": sum(1 for x in per if x["verdict"] == "hold"),
+            "claims": per,
+            "free_tier": "Which sentences are claims, and which checks each one trips.",
+            "paid_tier": {"route": "/audit", "price": PRICE_AUDIT,
+                          "adds": "why each check matters and the real incident behind it"},
+            "note": "Deterministic. Sentences are selected by assertion markers, not by a model.",
+        }
     if not claim.strip():
         return {
-            "error": "claim is required",
-            "usage": "/precheck?claim=<what you concluded>&evidence=<what you actually measured>",
+            "error": "claim or text is required",
+            "usage": ("/precheck?claim=<what you concluded>&evidence=<what you measured>"
+                      "  or  /precheck?text=<paste a paragraph of your findings>"),
         }
     r = _audit(claim, evidence)
     return {
@@ -583,14 +661,27 @@ async def precheck(claim: str = "", evidence: str = ""):
 
 
 @app.get("/audit")
-async def audit(claim: str = "", evidence: str = ""):
+async def audit(claim: str = "", evidence: str = "", text: str = ""):
     """결론을 내기 전에 부르는 관문. 매 실험·매 판정마다 필요하니 반복 호출된다."""
     if not PAY_TO:
         return _no_wallet()
+    if text.strip():
+        found = _claims(text)
+        if not found:
+            return {"mode": "text", "claims_found": 0,
+                    "note": "No sentence in this text asserts a finding."}
+        return {
+            "mode": "text",
+            "claims_found": len(found),
+            "claims": [{"claim": c, **_audit(c, text, trigger_on=c)} for c in found],
+            "checks_available": len(CHECKS),
+            "caveat": "A clean pass is not proof. It means these nine known traps were considered.",
+        }
     if not claim.strip():
         return {
-            "error": "claim is required",
-            "usage": "/audit?claim=<what you concluded>&evidence=<what you actually measured>",
+            "error": "claim or text is required",
+            "usage": ("/audit?claim=<what you concluded>&evidence=<what you measured>"
+                      "  or  /audit?text=<paste a paragraph of your findings>"),
         }
     r = _audit(claim, evidence)
     # 판정은 규칙이 내린다. 걸린 칸 중 증거에서 다뤄진 흔적이 없는 게 하나라도 있으면 보류다.
@@ -629,6 +720,15 @@ if PAY_TO:
     SERVICE = "Agent Failure Archive"
     TAGS = ["failures", "postmortem", "agents", "debugging", "reliability"]
 
+    # ⚠️ bazaar 확장은 {info, schema} 두 칸을 다 요구한다. info만 넣었더니 SDK가
+    # "malformed"로 경고하고 그 확장을 통째로 흘렸다(실측, 기동 로그에만 뜨는 조용한 종류).
+    # 손으로 모양을 맞추지 말고 공식 헬퍼가 만들게 한다. 그래야 규격이 바뀌어도 따라간다.
+    try:
+        from x402.extensions.bazaar import declare_discovery_extension as _declare
+    except ImportError:  # 구버전 SDK 폴백
+        def _declare(input=None):  # noqa: A002
+            return {"bazaar": {"info": {"input": input or {}}, "schema": {}}}
+
     def _route(price: str, desc: str, sample_input: dict) -> dict:
         return {
             "accepts": _accepts(price),
@@ -638,7 +738,7 @@ if PAY_TO:
             "tags": TAGS,
             # 입력 스키마가 비면 등재기가 "non-invocable"로 걸러낸다(x402scan DISCOVERY.md).
             # 인자가 없는 라우트도 형식만 채워 둔다.
-            "extensions": {"bazaar": {"discoverable": True, "info": {"input": sample_input}}},
+            "extensions": _declare(input=sample_input),
         }
 
     ROUTES = {
