@@ -366,41 +366,65 @@ if PAY_TO:
     from x402 import x402ResourceServer
     from x402.http import HTTPFacilitatorClient
     from x402.http.middleware.fastapi import payment_middleware
+    from x402.http.types import PaywallConfig
     from x402.mechanisms.evm.exact.register import register_exact_evm_server
 
     def _accepts(price: str) -> list[dict]:
         return [{"scheme": "exact", "payTo": PAY_TO, "price": price, "network": n} for n in NETWORKS]
 
+    # 목록에 뜨는 한 줄이 전부다. 등재기(x402scan)는 RouteConfig의 description·tags를
+    # 그대로 카드에 싣는데, 비워두면 FastAPI가 함수 이름으로 "Search"를 채운다.
+    # 사는 쪽은 그 한 줄만 보고 고르므로 "무엇을 주는지"를 첫 문장에 박는다.
+    # 한도(등재기가 조용히 잘라낸다): service_name 32자, tag 5개·각 32자.
+    SERVICE = "Agent Failure Archive"
+    TAGS = ["failures", "postmortem", "agents", "debugging", "reliability"]
+
+    def _route(price: str, desc: str, sample_input: dict) -> dict:
+        return {
+            "accepts": _accepts(price),
+            "description": desc,
+            "mime_type": "application/json",
+            "service_name": SERVICE,
+            "tags": TAGS,
+            # 입력 스키마가 비면 등재기가 "non-invocable"로 걸러낸다(x402scan DISCOVERY.md).
+            # 인자가 없는 라우트도 형식만 채워 둔다.
+            "extensions": {"bazaar": {"discoverable": True, "info": {"input": sample_input}}},
+        }
+
     ROUTES = {
-        "GET /search": {
-            "accepts": _accepts(PRICE_SEARCH),
-            "extensions": {"bazaar": {"discoverable": True, "info": {"input": {"q": "hook dies silently"}}}},
-        },
-        "GET /brief": {
-            "accepts": _accepts(PRICE_BRIEF),
-            "extensions": {"bazaar": {"discoverable": True, "info": {"input": {"action": "wire a new cron job"}}}},
-        },
-        "GET /research": {
-            "accepts": _accepts(PRICE_RESEARCH),
-            "extensions": {
-                "bazaar": {"discoverable": True, "info": {"input": {"q": "personal ontology measurement"}}}
-            },
-        },
-        # 입력 스키마가 비면 등재기가 "non-invocable"로 걸러낸다(x402scan DISCOVERY.md).
-        # 인자가 없는 라우트도 형식만 채워 둔다.
-        "GET /archive": {
-            "accepts": _accepts(PRICE_ARCHIVE),
-            "extensions": {
-                "bazaar": {"discoverable": True, "info": {"input": {"format": "json"}}}
-            },
-        },
+        "GET /search": _route(
+            PRICE_SEARCH,
+            "Search 186 real AI-agent post-mortems by symptom. Returns 3 matching incidents "
+            "with root cause, the fix that worked, and the rule that stops it recurring.",
+            {"q": "hook dies silently"},
+        ),
+        "GET /brief": _route(
+            PRICE_BRIEF,
+            "Pre-flight check before an irreversible action. Describe the move; get back the "
+            "failure modes that already hit that exact move, and what to verify first.",
+            {"action": "wire a new cron job"},
+        ),
+        "GET /research": _route(
+            PRICE_RESEARCH,
+            "107 measurement failures from eight months of trying to measure one person with "
+            "embeddings. Silent detectors, absent positive controls, instruments measuring themselves.",
+            {"q": "positive control"},
+        ),
+        "GET /archive": _route(
+            PRICE_ARCHIVE,
+            "Every one of the 186 incidents in a single response. One payment, no signup, "
+            "no subscription. Buy it once and the whole corpus is yours.",
+            {"format": "json"},
+        ),
     }
 
     # exact 스킴을 서버 쪽에 등록하지 않으면 라우트가 통째로 죽는다
     # (RouteConfigurationError: No scheme for "exact"). 이 한 줄이 그 관문이다.
     _fac = HTTPFacilitatorClient({"url": FACILITATOR}) if FACILITATOR else HTTPFacilitatorClient()
     _server = register_exact_evm_server(x402ResourceServer(_fac), networks=NETWORKS)
-    _mw = payment_middleware(ROUTES, _server)
+    # 브라우저로 들어온 사람에게는 SDK가 지갑 연결 결제창을 띄운다. 이름을 안 주면
+    # 그 창이 "Payment Required"로만 뜨고 무엇을 사는지가 안 보인다.
+    _mw = payment_middleware(ROUTES, _server, PaywallConfig(app_name="Agent Failure Archive"))
 
     LEDGER = Path(os.environ.get("X402_LEDGER", "/tmp/afa_payments.jsonl"))
 
@@ -438,12 +462,36 @@ else:
 # ── OpenAPI에 결제 정보 심기 (등재기 1순위 발견 경로) ────────────────
 # x402scan은 /openapi.json을 먼저 본다. 거기 x-payment-info와 402 응답이 없으면
 # 유료 라우트인 줄 모르고 지나간다(docs/DISCOVERY.md §A).
-_PRICES = {
-    "/search": PRICE_SEARCH,
-    "/brief": PRICE_BRIEF,
-    "/research": PRICE_RESEARCH,
-    "/archive": PRICE_ARCHIVE,
+# 등재기는 operation의 summary/description을 카드 문구로 그대로 쓴다.
+# 비워두면 FastAPI가 함수 이름("Search")을 넣고, 목록에서 그 한 줄이 전부라 아무도 안 누른다.
+_PAID = {
+    "/search": (
+        PRICE_SEARCH,
+        "Search agent post-mortems by symptom",
+        "Search 186 real AI-agent post-mortems by symptom. Returns 3 matching incidents with "
+        "root cause, the fix that worked, and the rule that stops it recurring. No signup.",
+    ),
+    "/brief": (
+        PRICE_BRIEF,
+        "Pre-flight risk check before an irreversible action",
+        "Describe what you are about to do. Get back the failure modes that already hit that "
+        "exact move, drawn from 186 logged incidents, and what to verify before you commit.",
+    ),
+    "/research": (
+        PRICE_RESEARCH,
+        "107 failures from measuring a person with embeddings",
+        "Eight months of trying to measure one person's individuation. Silent detectors, "
+        "missing positive controls, dose-response arms that were never equal, instruments "
+        "that kept measuring themselves. The failures nobody publishes.",
+    ),
+    "/archive": (
+        PRICE_ARCHIVE,
+        "The entire corpus in one response",
+        "Every one of the 186 incidents in a single call. One payment, no subscription, "
+        "no account. Buy it once and the whole corpus is yours.",
+    ),
 }
+_PRICES = {p: v[0] for p, v in _PAID.items()}
 
 
 def _openapi():
@@ -461,10 +509,14 @@ def _openapi():
         routes=app.routes,
     )
     schema["servers"] = [{"url": PUBLIC}]
-    for path, price in _PRICES.items():
+    for path, (price, summary, blurb) in _PAID.items():
         op = schema.get("paths", {}).get(path, {}).get("get")
         if not op:
             continue
+        op["summary"] = summary
+        op["description"] = f"{blurb} Price: {price} per call, settled in USDC on Base via x402."
+        op["operationId"] = "afa_" + path.strip("/")
+        op["tags"] = ["Agent Failure Archive"]
         op["x-payment-info"] = {
             "protocols": ["x402"],
             "price": {"mode": "fixed", "currency": "USD", "amount": price.lstrip("$")},
@@ -480,3 +532,17 @@ def _openapi():
 
 
 app.openapi = _openapi
+
+
+# 등재기(Next.js)는 fetch 응답을 캐시한다. 캐시 헤더가 없으면 첫 크롤 결과를 계속 재사용해서,
+# 설명·태그를 고쳐 다시 등록해도 옛 문구가 그대로 남는다(실측: 재등록 registered=4인데
+# lastUpdated가 첫 등록 시각에서 안 움직임). 발견 문서만 no-store로 못박아 매번 새로 읽게 한다.
+_NO_STORE = ("/openapi.json", "/.well-known/x402", "/.well-known/x402.json", "/llms.txt")
+
+
+@app.middleware("http")
+async def no_store_discovery(request: Request, call_next):
+    resp = await call_next(request)
+    if request.url.path in _NO_STORE:
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
