@@ -49,6 +49,7 @@ NETWORKS = [n.strip() for n in os.environ.get("X402_NETWORKS", "eip155:8453").sp
 NETWORK = NETWORKS[0]
 # 기본 facilitator는 테스트넷만 정산한다. 실돈은 키 없이 메인넷을 도는 곳으로.
 FACILITATOR = os.environ.get("X402_FACILITATOR", "https://facilitator.payai.network").strip()
+PRICE_AUDIT = os.environ.get("X402_PRICE_AUDIT", "$0.02")
 PRICE_SEARCH = os.environ.get("X402_PRICE_SEARCH", "$0.01")
 PRICE_BRIEF = os.environ.get("X402_PRICE_BRIEF", "$0.05")
 PRICE_RESEARCH = os.environ.get("X402_PRICE_RESEARCH", "$0.25")
@@ -144,6 +145,9 @@ async def index():
         "research_subset": len(_research_rows()),
         "endpoints": {
             "/sample": "free preview (2 cases)",
+            "/audit?claim=<what you concluded>&evidence=<what you measured>": (
+                f"{PRICE_AUDIT} per call, nine checks against fooling yourself"
+            ),
             "/search?q=<symptom>": f"{PRICE_SEARCH} per call, 3 cases with root cause + fix",
             "/brief?action=<what you are about to do>": f"{PRICE_BRIEF} per call, pre-flight risk brief",
             "/research?q=<topic>": f"{PRICE_RESEARCH} per call, failures from measuring personal ontology",
@@ -157,7 +161,7 @@ async def index():
 
 
 PUBLIC = os.environ.get("X402_PUBLIC_BASE", "https://desktop-ai2ata5-1.tailfeb765.ts.net").rstrip("/")
-PAID_PATHS = ["/search", "/brief", "/research", "/archive"]
+PAID_PATHS = ["/audit", "/search", "/brief", "/research", "/archive"]
 
 
 @app.get("/.well-known/x402")
@@ -179,6 +183,19 @@ async def well_known_x402():
             "watchers that exit 0 after their session expired."
         ),
         "endpoints": [
+            {
+                "path": "/audit",
+                "method": "GET",
+                "price": PRICE_AUDIT,
+                "description": (
+                    "Audit a claim before acting on it. Returns the checks it trips, each one a "
+                    "failure that actually shipped. Deterministic, no model in the loop."
+                ),
+                "input": {
+                    "claim": "string, what you concluded",
+                    "evidence": "string, what you actually measured",
+                },
+            },
             {
                 "path": "/search",
                 "method": "GET",
@@ -246,6 +263,11 @@ keeps turning out to be measuring your own instrument instead.
 - GET /llms.txt    this file
 
 ## Paid (USDC on Base, x402, no API key, no signup)
+- GET /audit?claim=<conclusion>&evidence=<what you measured>   {PRICE_AUDIT}
+  Nine checks against fooling yourself, applied to your own claim. Silent detectors,
+  unequal treatment arms, inflated denominators, exit-0 successes that did nothing,
+  cached views read as state. Deterministic: same input, same audit, no model consulted.
+  Reach for this every time you are about to write "we found that".
 - GET /search?q=<symptom>                     {PRICE_SEARCH}
   Three incidents matching a symptom. Try: "cron job silently stopped",
   "hook dies without error", "process exits 0 but did nothing".
@@ -361,6 +383,190 @@ async def archive(format: str = "json"):
     }
 
 
+# ── /audit: 판정을 내리기 전에 자기를 속이고 있는지 검사한다 ─────────
+# 이 시장이 사는 건 일회성 지식이 아니라 매 실행마다 필요한 것이다(판매 상위 전원이 그렇다).
+# 그래서 아카이브에서 얻은 규율을 "결론을 낼 때마다 부르는 관문"으로 내놓는다.
+# LLM을 안 쓴다. 결정론이라 값이 싸고, 같은 입력에 같은 답이 나오고, 틀려도 왜 틀렸는지 보인다.
+#
+# 아홉 칸 전부 우리가 실제로 당한 것이고, 숫자는 그때 잰 값 그대로다.
+CHECKS: list[dict] = [
+    {
+        "id": "positive_control",
+        "triggers": ["no signal", "no effect", "not significant", "null result", "nothing found",
+                     "no difference", "no correlation", "absent", "failed to detect"],
+        "question": "Did you show the detector firing on something it should catch?",
+        "why": "A silent detector and a healthy system produce identical output. Absence of "
+               "signal is also consistent with a broken instrument, or with the stimulus never "
+               "arriving at all.",
+        "incident": "Global operationalizations returned null three times and were read as a "
+                    "finding. With a positive control added, one arm turned out never to have "
+                    "received the treatment.",
+        "run": "Point the same detector at a case where the effect is known to exist. If it "
+               "stays silent there too, your null says nothing.",
+        "addressed_if": ["positive control", "known-positive", "sanity check", "control arm"],
+    },
+    {
+        "id": "dose_response_equal",
+        "triggers": ["threshold", "cutoff", "parameter", "min length", "arms", "condition",
+                     "we set", "we varied", "dose", "tuned"],
+        "question": "Did the same parameter apply the same treatment to every arm?",
+        "why": "Equal parameters are not equal treatments. Strength must be matched by measured "
+               "effect, not by the number you typed.",
+        "incident": "Raising a minimum-length floor from 3 to 5 dropped 20.5% of fragments in "
+                    "one arm and 2.7% in the other. Same number, two different experiments. One "
+                    "effect size sat at zero for that reason alone.",
+        "run": "Report the per-arm attrition (or equivalent) side by side before comparing outcomes.",
+        "addressed_if": ["per-arm", "attrition", "each arm", "matched", "balanced"],
+    },
+    {
+        "id": "denominator_inflation",
+        "triggers": ["files", "rows", "records", "count", "total", "we have", "corpus size",
+                     "documents", "entries", "n ="],
+        "question": "Is your denominator counting the same thing more than once?",
+        "why": "Append-only snapshot pipelines re-dump the same unit under a new name. Counting "
+               "files then means counting history, and long-lived units dominate any sample.",
+        "incident": "4,279 stored conversation files were 2,273 unique sessions plus 2,006 "
+                    "re-dumps. Every count inflated 2.3x, and retrieval over-represented the "
+                    "oldest session by up to 57x.",
+        "run": "Deduplicate by the natural key, not the filename, and recount.",
+        "addressed_if": ["deduplicat", "dedupe", "unique", "distinct", "by key"],
+    },
+    {
+        "id": "silent_success",
+        "triggers": ["exit 0", "succeeded", "ran fine", "no error", "completed", "passed",
+                     "worked", "healthy", "green"],
+        "question": "Would this look identical if it had done nothing?",
+        "why": "Exit code zero means the process ended, not that the work happened. Expired "
+               "credentials, empty inputs and skipped branches all exit clean.",
+        "incident": "A publishing watcher exited 0 for days after its login expired. Nothing "
+                    "was ever published and no alarm fired, because the process kept succeeding.",
+        "run": "Assert on the produced artifact, not on the exit code. Count outputs, not runs.",
+        "addressed_if": ["asserted", "verified output", "artifact", "counted output", "end-to-end"],
+    },
+    {
+        "id": "no_call_site",
+        "triggers": ["monitor", "detector", "watcher", "guard", "repair", "alert", "signal",
+                     "health check", "we built", "automated"],
+        "question": "Who actually calls this, and how often did it fire?",
+        "why": "A diagnostic wired only to a human-readable signal has no executor. The work "
+               "silently becomes someone's future decision, which means nobody's.",
+        "incident": "A repair routine existed and its runner ticked 26,662 times over 22.7 "
+                    "hours. It performed zero repairs, because a guard condition never matched. "
+                    "Fourteen sessions sat dead the whole time.",
+        "run": "Grep for the call site. If the only consumer is a log line or a human summary, "
+               "the deterministic part belongs in the scheduler instead.",
+        "addressed_if": ["call site", "cron", "scheduler", "invoked by", "wired to", "fired"],
+    },
+    {
+        "id": "stale_cache_read",
+        "triggers": ["listing", "dashboard", "api returned", "shows", "still says", "displayed",
+                     "index", "cached", "ui"],
+        "question": "Did you read the state, or a view of the state?",
+        "why": "A read path can be cached at a different layer than the write path, so a "
+               "successful write and an unchanged display are perfectly compatible.",
+        "incident": "A re-registration reported four resources written, while the list endpoint "
+                    "kept showing the previous text. Querying the record directly showed the new "
+                    "values had landed four minutes earlier. The list was a cached view.",
+        "run": "Fetch the single record by id, not the collection. Compare timestamps.",
+        "addressed_if": ["by id", "direct query", "primary record", "bypass cache", "timestamp"],
+    },
+    {
+        "id": "summary_not_source",
+        "triggers": ["according to", "the readme", "the docs say", "summary", "listed as",
+                     "appears to", "seems", "based on the description", "filename"],
+        "question": "Have you read the primary text, or a compression of it?",
+        "why": "Summaries, directory listings and filenames are lossy. What the compression "
+               "dropped is exactly what reverses comparative verdicts.",
+        "incident": "An external repository was judged weaker from its listing and one-line "
+                    "descriptions. After reading all fourteen files the verdict inverted: the "
+                    "thing that mattered, a held-out evaluation set, was invisible in the summary.",
+        "run": "Clone or open the source and read the parts your claim depends on. State how "
+               "much you read.",
+        "addressed_if": ["read the source", "full text", "cloned", "read all", "verbatim"],
+    },
+    {
+        "id": "self_measurement",
+        "triggers": ["user said", "speaker", "authored", "personal", "human", "their writing",
+                     "utterance", "voice", "style", "individual"],
+        "question": "Is the instrument measuring its own output back to itself?",
+        "why": "Pipelines that record 'user' turns often capture injected system text, agent "
+               "output and inter-process messages under the same label. The measurement then "
+               "reports the machine to the machine.",
+        "incident": "Blocks labelled as human turns were between 14% and 56% machine-authored "
+                    "depending on the month, and the contamination rate tracked agent activity "
+                    "rather than anything about the person.",
+        "run": "Sample the largest remaining items by hand. An exclusion list only removes what "
+               "you already knew about.",
+        "addressed_if": ["sampled", "hand-check", "manually inspect", "filtered and verified",
+                         "provenance"],
+    },
+    {
+        "id": "doc_claims_code",
+        "triggers": ["configured", "the system does", "weighting", "the flag", "by design",
+                     "documented", "supposed to", "should be"],
+        "question": "Did you verify the behaviour in the code, or quote a document about it?",
+        "why": "Code changes and documentation does not follow. A dead sentence outlives the "
+               "behaviour it described, and reading it aloud launders it back into fact.",
+        "incident": "A weighting rule was quoted from documentation for weeks. A full read of "
+                    "the retrieval code found no such weighting anywhere. It had been removed "
+                    "six weeks earlier.",
+        "run": "Grep the behaviour in the code before citing it, and fix the document in the "
+               "same sitting if it disagrees.",
+        "addressed_if": ["grepped", "read the code", "verified in code", "traced"],
+    },
+]
+
+
+def _audit(claim: str, evidence: str) -> dict:
+    text = f"{claim} {evidence}".lower()
+    ev = evidence.lower()
+    triggered, unaddressed = [], []
+    for c in CHECKS:
+        if not any(t in text for t in c["triggers"]):
+            continue
+        done = any(a in ev for a in c["addressed_if"])
+        triggered.append({
+            "id": c["id"],
+            "question": c["question"],
+            "why_it_matters": c["why"],
+            "real_incident": c["incident"],
+            "what_to_run": c["run"],
+            "looks_addressed": done,
+        })
+        if not done:
+            unaddressed.append(c["id"])
+    return {"triggered": triggered, "unaddressed": unaddressed}
+
+
+@app.get("/audit")
+async def audit(claim: str = "", evidence: str = ""):
+    """결론을 내기 전에 부르는 관문. 매 실험·매 판정마다 필요하니 반복 호출된다."""
+    if not PAY_TO:
+        return _no_wallet()
+    if not claim.strip():
+        return {
+            "error": "claim is required",
+            "usage": "/audit?claim=<what you concluded>&evidence=<what you actually measured>",
+        }
+    r = _audit(claim, evidence)
+    # 판정은 규칙이 내린다. 걸린 칸 중 증거에서 다뤄진 흔적이 없는 게 하나라도 있으면 보류다.
+    verdict = "hold" if r["unaddressed"] else ("proceed" if r["triggered"] else "no_checks_matched")
+    return {
+        "claim": claim,
+        "verdict": verdict,
+        "unaddressed": r["unaddressed"],
+        "checks": r["triggered"],
+        "checks_available": len(CHECKS),
+        "note": (
+            "Deterministic. No model is consulted, so the same input always returns the same "
+            "checks. Every check is a failure this operator actually shipped, with the numbers "
+            "measured at the time."
+        ),
+        "caveat": "A clean pass is not proof the claim is true. It only means these nine known "
+                  "ways of fooling yourself were considered.",
+    }
+
+
 # ── x402 페이월 (지갑이 있을 때만 장착) ──────────────────────────────
 if PAY_TO:
     from x402 import x402ResourceServer
@@ -392,6 +598,12 @@ if PAY_TO:
         }
 
     ROUTES = {
+        "GET /audit": _route(
+            PRICE_AUDIT,
+            "Check a claim against nine ways of fooling yourself, before you act on it. "
+            "Deterministic, no model in the loop. Every check is a failure that actually shipped.",
+            {"claim": "the feature has no measurable effect", "evidence": "ran it on 40 samples, p=0.4"},
+        ),
         "GET /search": _route(
             PRICE_SEARCH,
             "Search 186 real AI-agent post-mortems by symptom. Returns 3 matching incidents "
@@ -465,6 +677,14 @@ else:
 # 등재기는 operation의 summary/description을 카드 문구로 그대로 쓴다.
 # 비워두면 FastAPI가 함수 이름("Search")을 넣고, 목록에서 그 한 줄이 전부라 아무도 안 누른다.
 _PAID = {
+    "/audit": (
+        PRICE_AUDIT,
+        "Audit a claim before you act on it",
+        "Give it what you concluded and what you actually measured. It returns the checks your "
+        "claim trips, each one a failure that really shipped: silent detectors, unequal "
+        "treatment arms, inflated denominators, exit-0 successes that did nothing, cached views "
+        "read as state. Deterministic, so the same input always returns the same audit.",
+    ),
     "/search": (
         PRICE_SEARCH,
         "Search agent post-mortems by symptom",
