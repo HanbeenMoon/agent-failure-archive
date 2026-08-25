@@ -59,6 +59,7 @@ claim breaks before you notice it has broken.
 |---|---|---|
 | `GET /` | free | service metadata |
 | `GET /sample` | free | two full cases, no payment |
+| `GET /contents` | free | every case title, tagged by the trap it illustrates. Filter with `?theme=` |
 | `GET /audit?claim=<conclusion>&evidence=<what you measured>` | $0.02 | nine checks against fooling yourself, applied to your own claim |
 | `GET /search?q=<symptom>` | $0.01 | 3 cases: symptom, root cause, fix, prevention, evidence |
 | `GET /brief?action=<what you are about to do>` | $0.05 | pre-flight risk brief + checklist across 5 cases |
@@ -107,6 +108,12 @@ inventing findings.
 `/brief` is the one to reach for before doing something irreversible: describe the action in
 plain words and it returns the ways that class of action has actually gone wrong, plus the
 prevention line each incident produced.
+
+`/contents` is the shelf. Two sample cases cannot tell you whether the whole corpus is worth a
+dollar, so this returns all 186 titles, each tagged with which of the nine traps it illustrates,
+and nothing else. The distribution as of today: 108 cases involve reading a cached view as state,
+83 involve a denominator counting the same unit twice, 71 involve something built with no caller,
+36 involve a process that exited 0 having done nothing. Titles only, no bodies, no payment.
 
 `/archive` exists because a corpus is worth more whole than sliced. One payment ends the
 transaction; there is nothing to cancel afterwards.
