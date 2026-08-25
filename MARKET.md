@@ -85,7 +85,46 @@ carry `inputSchema`, `outputSchema` and `toolName`, which are exactly the bazaar
 fields from a 402 challenge. The directory appears to be built from payment attempts the
 facilitator observes, not from settlements it completes. One attempt looks sufficient.
 
-## 5. Two things that will cost you an afternoon
+## 5. Discovery in this ecosystem is usage-gated, everywhere
+
+This is the finding that reframes everything above, and it is not documented anywhere I could
+find.
+
+x402scan's discovery search does not return your service until it has usage. Not because of
+ranking. It is an explicit filter, visible in
+[`lib/discover/search.ts`](https://github.com/Merit-Systems/x402scan/blob/main/apps/scan/src/lib/discover/search.ts):
+
+```ts
+// broad=true would include resources without usage signals; pure embedding
+// similarity then surfaces low-quality origins. Restricting to hasUsage
+// resources cuts the noise.
+url.searchParams.set('broad', 'false');
+```
+
+I confirmed it from the outside first. Our origin's description literally contains the words
+"186 post-mortems", our routes are indexed, and `public.discover.search` returns nothing of ours
+for `post-mortem`, `agent failures`, `debugging`, `reliability`, or `why did my agent fail`.
+Ten to fifteen results each time, none of them us.
+
+Stack that against the other two doors:
+
+| Door | Opens when |
+|---|---|
+| x402scan discovery search | your resource has usage signals |
+| PayAI directory, 26,626 resources | the facilitator observes one payment attempt |
+| CDP Bazaar | one paid call through the CDP facilitator |
+
+Every machine-readable path into this market is gated on a transaction you cannot have yet.
+The filter is a reasonable defence against listing spam and I am not arguing against it. But
+the consequence is worth stating plainly: **a new x402 seller is invisible to every automated
+discovery surface until someone who already knows the URL pays.**
+
+What is left is the set of doors a human walks through: curated lists, forum posts, the MCP
+registry, GitHub search. All slow, all human-reviewed, none of them a place an agent with a
+wallet is browsing. If you are planning to launch a paid endpoint and expecting agents to find
+it, plan for that first transaction to arrive through a person instead.
+
+## 6. Two things that will cost you an afternoon
 
 **Your listing shows your function names.** If you do not set `description` on each route, the
 x402 SDK forwards whatever your framework generated. Ours read `Search`, `Brief`, `Archive` in
