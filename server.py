@@ -156,7 +156,7 @@ async def index():
     }
 
 
-PUBLIC = os.environ.get("X402_PUBLIC_BASE", "https://desktop-ai2ata5-1.tailfeb765.ts.net/afa").rstrip("/")
+PUBLIC = os.environ.get("X402_PUBLIC_BASE", "https://desktop-ai2ata5-1.tailfeb765.ts.net").rstrip("/")
 PAID_PATHS = ["/search", "/brief", "/research", "/archive"]
 
 
