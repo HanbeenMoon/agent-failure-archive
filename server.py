@@ -145,6 +145,7 @@ async def index():
         "research_subset": len(_research_rows()),
         "endpoints": {
             "/sample": "free preview (2 cases)",
+            "/contents": "free, every case title so you can see what $1 buys",
             "/precheck?claim=<what you concluded>&evidence=<what you measured>": (
                 "free, which of the nine checks your claim trips"
             ),
@@ -263,6 +264,9 @@ keeps turning out to be measuring your own instrument instead.
 ## Free
 - GET /            what this is
 - GET /sample      two full cases, no payment
+- GET /contents    free. Every case title, grouped by the trap it illustrates. Titles only,
+                   no bodies. This is the shelf: read it before deciding whether /archive
+                   is worth a dollar to you. Filter with ?theme=<id>.
 - GET /precheck?claim=<conclusion>&evidence=<what you measured>
                    free. Tells you which of the nine checks your claim trips and the
                    question each one asks. Costs nothing and is useful on its own.
@@ -593,6 +597,50 @@ def _audit(claim: str, evidence: str, trigger_on: str | None = None) -> dict:
         if not done:
             unaddressed.append(c["id"])
     return {"triggered": triggered, "unaddressed": unaddressed}
+
+
+def _themes(r: dict) -> list[str]:
+    """이 사례가 어느 함정을 예시하는가. 검사표를 그대로 재사용한다(분류를 따로 만들지 않는다)."""
+    blob = json.dumps(r, ensure_ascii=False).lower()
+    return [c["id"] for c in CHECKS if any(t in blob for t in c["triggers"])]
+
+
+@app.get("/contents")
+async def contents(theme: str = ""):
+    """무료. 선반을 통째로 보여준다. 제목만, 본문은 없다.
+
+    미리보기 2건으로는 폭을 알 수 없어서 1달러가 비싼지 싼지 판단이 안 된다.
+    목록을 다 보여주면 무엇을 사는지가 눈에 보이고, 그게 정직한 판매다.
+    """
+    all_rows = rows()
+    research = {id(r) for r in _research_rows()}
+    items = []
+    counts: dict[str, int] = {}
+    for r in all_rows:
+        th = _themes(r)
+        for t in th:
+            counts[t] = counts.get(t, 0) + 1
+        if theme and theme not in th:
+            continue
+        items.append({
+            "case_id": f"{r['kind']}-{r['id']}",
+            "title": r["title"],
+            "themes": th,
+            "has_measured_evidence": bool(r["evidence"]),
+            "measurement_half": id(r) in research,
+        })
+    return {
+        "total_cases": len(all_rows),
+        "showing": len(items),
+        "filter": theme or None,
+        "themes_available": dict(sorted(counts.items(), key=lambda x: -x[1])),
+        "with_measured_evidence": sum(1 for r in all_rows if r["evidence"]),
+        "measurement_half": len(research),
+        "titles_only": True,
+        "full_text": {"route": "/archive", "price": PRICE_ARCHIVE,
+                      "note": "every case in one response, one payment, no subscription"},
+        "cases": items,
+    }
 
 
 @app.get("/precheck")
