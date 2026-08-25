@@ -1067,6 +1067,33 @@ _NO_STORE = ("/openapi.json", "/.well-known/x402", "/.well-known/x402.json", "/l
 # FastAPI는 GET 라우트에 HEAD를 자동으로 붙이지 않는다. 생존 확인을 HEAD로 하는 색인기 눈에는
 # 우리가 죽은 주소로 보인다("reachable endpoint" 집계에서 빠지는 자리).
 # 라우트를 다 고치는 대신 바깥에서 HEAD를 GET으로 돌리고 본문만 버린다(HEAD 의미 그대로).
+# 접속 원장. uvicorn 기본 로그는 User-Agent를 안 남겨서 "크롤러인가 사람인가"를 못 가른다.
+# 실측으로 이게 문제가 됐다: 외부 요청 1,031건을 보고 "전환 문제"라고 단정했는데
+# IP를 조회해보니 전부 AWS·GCP였다 = 색인기지 손님이 아니다. 판정이 통째로 바뀌는 차이다.
+# IP는 /24까지만 남긴다(제3자 주소를 통째로 쌓을 이유가 없다).
+ACCESS = Path(os.environ.get("X402_ACCESS_LOG", "/tmp/afa_access.jsonl"))
+
+
+@app.middleware("http")
+async def access_log(request: Request, call_next):
+    resp = await call_next(request)
+    try:
+        host = (request.client.host if request.client else "") or ""
+        prefix = ".".join(host.split(".")[:3]) + ".0" if host.count(".") == 3 else host
+        with ACCESS.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "path": request.url.path,
+                "method": request.method,
+                "status": resp.status_code,
+                "ua": (request.headers.get("user-agent") or "")[:180],
+                "ref": (request.headers.get("referer") or "")[:180],
+                "ip24": prefix,
+            }, ensure_ascii=False) + "\n")
+    except Exception as e:  # 원장이 막혀도 서비스는 계속 판다
+        print(f"[access] {type(e).__name__}: {e}", file=sys.stderr)
+    return resp
+
+
 @app.middleware("http")
 async def head_as_get(request: Request, call_next):
     if request.method != "HEAD":
