@@ -145,6 +145,9 @@ async def index():
         "research_subset": len(_research_rows()),
         "endpoints": {
             "/sample": "free preview (2 cases)",
+            "/precheck?claim=<what you concluded>&evidence=<what you measured>": (
+                "free, which of the nine checks your claim trips"
+            ),
             "/audit?claim=<what you concluded>&evidence=<what you measured>": (
                 f"{PRICE_AUDIT} per call, nine checks against fooling yourself"
             ),
@@ -260,6 +263,11 @@ keeps turning out to be measuring your own instrument instead.
 ## Free
 - GET /            what this is
 - GET /sample      two full cases, no payment
+- GET /precheck?claim=<conclusion>&evidence=<what you measured>
+                   free. Tells you which of the nine checks your claim trips and the
+                   question each one asks. Costs nothing and is useful on its own.
+                   The paid /audit adds why each matters, the incident behind it with
+                   the measured numbers, and the specific thing to run.
 - GET /llms.txt    this file
 
 ## Paid (USDC on Base, x402, no API key, no signup)
@@ -536,6 +544,42 @@ def _audit(claim: str, evidence: str) -> dict:
         if not done:
             unaddressed.append(c["id"])
     return {"triggered": triggered, "unaddressed": unaddressed}
+
+
+@app.get("/precheck")
+async def precheck(claim: str = "", evidence: str = ""):
+    """무료. 어느 칸에 걸리는지까지만 알려준다.
+
+    콜드스타트에서 진짜 병목은 발견이 아니라 "왜 돈을 내야 하는지 모른다"는 것이다.
+    이 라우트는 걸린 칸의 *이름과 질문*을 공짜로 준다. 그것만으로도 쓸모가 있어서 돌려보게 되고,
+    돌려보면 "그래서 뭘 어떻게 확인하라는 건데"가 남는다. 그 답이 유료 /audit이다.
+    미끼가 정직하려면 무료분만으로도 실제로 도움이 돼야 한다.
+    """
+    if not claim.strip():
+        return {
+            "error": "claim is required",
+            "usage": "/precheck?claim=<what you concluded>&evidence=<what you actually measured>",
+        }
+    r = _audit(claim, evidence)
+    return {
+        "claim": claim,
+        "verdict": "hold" if r["unaddressed"] else ("proceed" if r["triggered"] else "no_checks_matched"),
+        "checks_tripped": [
+            {"id": c["id"], "question": c["question"], "looks_addressed": c["looks_addressed"]}
+            for c in r["triggered"]
+        ],
+        "unaddressed_count": len(r["unaddressed"]),
+        "free_tier": "You get which checks you tripped and the question each one asks.",
+        "paid_tier": {
+            "route": "/audit",
+            "price": PRICE_AUDIT,
+            "adds": (
+                "why each check matters, the real incident behind it with the numbers measured "
+                "at the time, and the specific thing to run to settle it"
+            ),
+        },
+        "note": "Deterministic. No model is consulted, and this preview costs nothing.",
+    }
 
 
 @app.get("/audit")
