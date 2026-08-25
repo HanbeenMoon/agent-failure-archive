@@ -1046,6 +1046,42 @@ def _openapi():
         routes=app.routes,
     )
     schema["servers"] = [{"url": PUBLIC}]
+
+    # ⚠️ 외부 검증기(mppscan 등록 감사)가 우리 x-payment-info 를 **못 봤다**고 돌려줬다.
+    # operation 아래에만 달아뒀는데 path item 쪽을 보는 구현이 있다. 양쪽에 단다(중복은 무해).
+    # 그리고 무료 라우트는 `security: []` 로 "명시적 공개"라고 말해줘야 한다.
+    # 안 그러면 감사에서 "auth mode 선언 없음" 경고가 14건 뜨고, 색인기가 유무료를 못 가른다.
+    def _paid_info(price: str, protocols: list[str], networks: list[str], asset: str) -> dict:
+        return {
+            "protocols": protocols,
+            "price": {"mode": "fixed", "currency": "USD", "amount": price.lstrip("$")},
+            "networks": networks,
+            "payTo": PAY_TO,
+            "asset": asset,
+        }
+
+    # MPP 라우트도 유료라고 선언해야 MPP 색인기가 집는다(안 하면 등록 시 5건 전부 실패).
+    _MPP_INFO = {f"/mpp/{k}": v for k, v in
+                 {"search": "$0.01", "audit": "$0.02", "brief": "$0.05",
+                  "research": "$0.25", "archive": "$1.00"}.items()}
+    for path, price in _MPP_INFO.items():
+        item = schema.get("paths", {}).get(path)
+        if not item:
+            continue
+        info = _paid_info(price, ["mpp"], ["tempo:4217"], "USDC")
+        item["x-payment-info"] = info
+        op = item.get("get")
+        if op:
+            op["x-payment-info"] = info
+            op.setdefault("responses", {})["402"] = {
+                "description": "Payment required. Challenge ships in the WWW-Authenticate header."
+            }
+
+    for path, item in schema.get("paths", {}).items():
+        op = item.get("get")
+        if op and path not in _PAID and path not in _MPP_INFO:
+            op["security"] = []          # 명시적 공개
+
     for path, (price, summary, blurb) in _PAID.items():
         op = schema.get("paths", {}).get(path, {}).get("get")
         if not op:
@@ -1054,13 +1090,9 @@ def _openapi():
         op["description"] = f"{blurb} Price: {price} per call, settled in USDC on Base via x402."
         op["operationId"] = "afa_" + path.strip("/")
         op["tags"] = ["Agent Failure Archive"]
-        op["x-payment-info"] = {
-            "protocols": ["x402"],
-            "price": {"mode": "fixed", "currency": "USD", "amount": price.lstrip("$")},
-            "networks": NETWORKS,
-            "payTo": PAY_TO,
-            "asset": "USDC",
-        }
+        info = _paid_info(price, ["x402"], NETWORKS, "USDC")
+        op["x-payment-info"] = info
+        schema["paths"][path]["x-payment-info"] = info   # path item 쪽도 본다
         op.setdefault("responses", {})["402"] = {
             "description": "Payment required. The challenge ships in the Payment-Required header."
         }
