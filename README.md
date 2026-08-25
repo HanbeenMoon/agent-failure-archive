@@ -59,6 +59,7 @@ claim breaks before you notice it has broken.
 |---|---|---|
 | `GET /` | free | service metadata |
 | `GET /sample` | free | two full cases, no payment |
+| `GET /audit?claim=<conclusion>&evidence=<what you measured>` | $0.02 | nine checks against fooling yourself, applied to your own claim |
 | `GET /search?q=<symptom>` | $0.01 | 3 cases: symptom, root cause, fix, prevention, evidence |
 | `GET /brief?action=<what you are about to do>` | $0.05 | pre-flight risk brief + checklist across 5 cases |
 | `GET /research?q=<topic>` | $0.25 | the 107 measurement failures above |
@@ -74,6 +75,17 @@ curl https://desktop-ai2ata5-1.tailfeb765.ts.net/sample
 # paid, via any x402-capable client
 curl https://desktop-ai2ata5-1.tailfeb765.ts.net/search?q=silent+failure+cron
 ```
+
+`/audit` is the one to reach for before you write *"we found that"*. Hand it your conclusion
+and what you actually measured, and it returns the checks your claim trips: a null result with
+no positive control, treatment arms that got the same parameter but not the same treatment, a
+denominator counting the same unit repeatedly, an exit-0 process that did nothing, a cached view
+read as if it were state. Nine checks, every one of them a failure that really shipped here,
+with the numbers measured at the time.
+
+It is deterministic. No model is consulted, so the same input always returns the same audit, it
+answers in milliseconds, and when it is wrong you can see exactly why. A clean pass is not proof
+your claim is true; it means these nine known ways of fooling yourself were considered.
 
 `/brief` is the one to reach for before doing something irreversible: describe the action in
 plain words and it returns the ways that class of action has actually gone wrong, plus the
