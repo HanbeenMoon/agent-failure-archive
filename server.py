@@ -974,6 +974,20 @@ else:
     print("[x402] X402_PAY_TO unset — free routes only, paid routes return 503", file=sys.stderr)
 
 
+# ── 두 번째 결제 규격(MPP) ────────────────────────────────────────
+# x402 쪽 자동 발견면이 전부 "이미 거래가 있었을 것"을 요구해서 신규 판매자는 안 보인다.
+# MPP는 공식 디렉토리가 PR로 등재를 받는다 = 실적 없이도 들어갈 수 있는 문. 그래서 같이 연다.
+# 경로를 /mpp/* 로 갈라 x402 미들웨어와 안 겹치게 했고, 실패해도 본체는 계속 팔도록 감쌌다.
+MPP_PATHS: list[str] = []
+try:
+    import mpp_routes  # noqa: E402
+
+    MPP_PATHS = mpp_routes.attach(app, sys.modules[__name__])
+    print(f"[mpp] paid routes live · {len(MPP_PATHS)} paths", file=sys.stderr)
+except Exception as e:  # 조용히 죽지 않는다
+    print(f"[mpp] not attached: {type(e).__name__}: {e}", file=sys.stderr)
+
+
 # ── OpenAPI에 결제 정보 심기 (등재기 1순위 발견 경로) ────────────────
 # x402scan은 /openapi.json을 먼저 본다. 거기 x-payment-info와 402 응답이 없으면
 # 유료 라우트인 줄 모르고 지나간다(docs/DISCOVERY.md §A).
